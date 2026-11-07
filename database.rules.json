@@ -1,0 +1,24 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "rooms": {
+      "$room": {
+        "players": {
+          ".read": true,
+          "$pid": {
+            ".write": true,
+            ".validate": "newData.hasChildren(['n', 'x', 'z', 's']) && newData.child('n').isString() && newData.child('n').val().length <= 16 && newData.child('x').isNumber() && newData.child('z').isNumber() && newData.child('s').isString() && newData.child('s').val().length <= 120"
+          }
+        },
+        "chat": {
+          ".read": true,
+          "$mid": {
+            ".write": "!data.exists() && newData.exists()",
+            ".validate": "newData.hasChildren(['id', 'n', 'm', 't']) && newData.child('n').isString() && newData.child('n').val().length <= 16 && newData.child('m').isString() && newData.child('m').val().length > 0 && newData.child('m').val().length <= 120 && newData.child('t').val() <= now"
+          }
+        }
+      }
+    }
+  }
+}
