@@ -2933,7 +2933,7 @@ const ROOM = 'syu-campus';
 const LOOKS = [0x1d4f91, 0xe53935, 0x43a047, 0xfdd835, 0x8e24aa, 0x00acc1, 0xf06292, 0xff8f00, 0x37474f, 0xffffff];
 const ME_KEY = 'syu-metaverse-me-v1';
 const me = { id: Math.random().toString(36).slice(2, 10), name: '', top: LOOKS[0], tags: {} };
-const net = { state: 'off', api: null, meRef: null, chatRef: null, remotes: new Map(), count: 0, sendT: 0, beatT: 0, sig: '', listenAt: 0, chatAt: 0, lastChat: 0, sentAt: 0 };
+const net = { state: 'off', api: null, meRef: null, chatRef: null, playersRef: null, offset: 0, remotes: new Map(), count: 0, sendT: 0, beatT: 0, sig: '', listenAt: 0, chatAt: 0, lastChat: 0, sentAt: 0 };
 const cleanName = (n) => String(n ?? '').replace(/[\u0000-\u001f<>]/g, '').trim().slice(0, 12) || '익명';
 const hex = (c) => '#' + (Number(c) >>> 0 & 0xffffff).toString(16).padStart(6, '0');
 const nowS = () => performance.now() / 1000;
@@ -2942,7 +2942,7 @@ const nowS = () => performance.now() / 1000;
 function spriteOf(c, w) {
   const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
   const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, fog: false }));
-  s.scale.set(w, w * c.height / c.width, 1); s.renderOrder = 10;
+  s.scale.set(w, w * c.height / c.width, 1); s.renderOrder = 10; s.userData.base = s.scale.clone();
   return s;
 }
 function dropSprite(s) { if (!s) return; s.parent?.remove(s); s.material.map.dispose(); s.material.dispose(); }
@@ -2966,19 +2966,22 @@ function showBubble(p, h, text) {
   const bw = Math.max(...lines.map((l) => g.measureText(l).width)) + 44, bh = lines.length * 36 + 24;
   c.height = bh + 16; g.font = font;
   const x0 = (512 - bw) / 2;
-  g.fillStyle = 'rgba(255,255,255,.96)'; g.beginPath(); g.roundRect(x0, 0, bw, bh, 18); g.fill();
-  g.beginPath(); g.moveTo(244, bh - 1); g.lineTo(268, bh - 1); g.lineTo(256, bh + 14); g.fill();
+  g.fillStyle = 'rgba(255,255,255,.96)'; g.strokeStyle = 'rgba(20,36,60,.35)'; g.lineWidth = 4;
+  g.beginPath(); g.roundRect(x0 + 2, 2, bw - 4, bh - 4, 18); g.fill(); g.stroke();
+  g.beginPath(); g.moveTo(244, bh - 3); g.lineTo(268, bh - 3); g.lineTo(256, bh + 14); g.closePath(); g.fill();
   g.fillStyle = '#1b2433'; g.textAlign = 'center'; g.textBaseline = 'middle';
   lines.forEach((l, i) => g.fillText(l, 256, 12 + 18 + i * 36));
   h.bubble = spriteOf(c, 2.6); h.until = nowS() + 7; p.root.add(h.bubble);
 }
 function placeTags(p, h) {
   if (!h.tag) return;
-  const y = p.pose === 'sit' ? 1.78 : p.pose === 'lie' ? 0.95 : p.swim ? 0.85 : 2.12;
-  h.tag.position.set(0, y, 0);
+  // 실내는 카메라가 가까워서 이름표·말풍선을 작게
+  const y = p.pose === 'sit' ? 1.78 : p.pose === 'lie' ? 0.95 : p.swim ? 0.85 : 2.12, k = loc.mode === 'in' ? 0.6 : 1;
+  h.tag.scale.copy(h.tag.userData.base).multiplyScalar(k); h.tag.position.set(0, y, 0);
   if (!h.bubble) return;
   if (nowS() > h.until) { dropSprite(h.bubble); h.bubble = null; return; }
-  h.bubble.position.set(0, y + 0.24 + h.bubble.scale.y / 2, 0);
+  h.bubble.scale.copy(h.bubble.userData.base).multiplyScalar(k);
+  h.bubble.position.set(0, y + 0.24 * k + h.bubble.scale.y / 2, 0);
 }
 
 // ---------- 같은 공간에 있는 사람만 보이게 ----------
@@ -2996,6 +2999,10 @@ function mySnapshot() {
 // ---------- 원격 접속자 ----------
 function upsertRemote(id, d, initial) {
   if (id === me.id || !d || !Number.isFinite(d.x) || !Number.isFinite(d.z)) return;
+  // 창이 비정상적으로 닫혀 남은 기록: 2분 넘게 소식이 없으면 지우고, 20초 넘으면 새로 그리지 않아요
+  const age = Number.isFinite(d.t) ? Math.max(0, Date.now() + net.offset - d.t) : 0;
+  if (age > 120000) { net.api.remove(net.api.child(net.playersRef, id)).catch(() => {}); return; }
+  if (age > 20000 && !net.remotes.has(id)) return;
   let r = net.remotes.get(id);
   if (!r) {
     const hsh = [...id].reduce((a, ch) => a * 31 + ch.charCodeAt(0) >>> 0, 7);
@@ -3005,7 +3012,7 @@ function upsertRemote(id, d, initial) {
     net.remotes.set(id, r);
     if (!initial && performance.now() - net.listenAt > 2500) sysMsg(`${cleanName(d.n)}님이 들어왔어요 👋`);
   }
-  r.d = d; r.seen = performance.now();
+  r.d = d; r.seen = performance.now() - age;
   const nm = cleanName(d.n);
   if (nm !== r.name) { r.name = nm; setTag(r.p, r.tags, nm, d.c); }
 }
@@ -3071,7 +3078,8 @@ async function netConnect() {
     const app = initializeApp({ ...FIREBASE_CONFIG, databaseURL: url });
     if (location.protocol.startsWith('http')) import(`${FB_CDN}/firebase-analytics.js`).then(async (A) => { if (await A.isSupported()) A.getAnalytics(app); }).catch(() => {});
     const db = D.getDatabase(app), base = `rooms/${ROOM}`;
-    net.api = D; net.meRef = D.ref(db, `${base}/players/${me.id}`); net.chatRef = D.ref(db, `${base}/chat`);
+    net.api = D; net.meRef = D.ref(db, `${base}/players/${me.id}`); net.chatRef = D.ref(db, `${base}/chat`); net.playersRef = D.ref(db, `${base}/players`);
+    D.onValue(D.ref(db, '.info/serverTimeOffset'), (s) => { net.offset = Number(s.val()) || 0; });
     D.onValue(D.ref(db, '.info/connected'), (s) => {
       if (s.val() !== true) { if (net.state === 'on') setOnline('connecting'); return; }
       D.onDisconnect(net.meRef).remove();
